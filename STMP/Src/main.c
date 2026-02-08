@@ -31,12 +31,12 @@ static void MX_GPIO_Init(void);
 static void PVD_Config();
 
 static FRESULT openFile(char *filename) {
-    DIR dj;
-    FILINFO fno;
-    FRESULT fr;
+	DIR dj;
+	FILINFO fno;
+	FRESULT fr;
 
-    fr = f_opendir(&dj, "");
-    if(fr == FR_OK){
+	fr = f_opendir(&dj, "");
+	if(fr == FR_OK){
 		uint32_t i = 0;
 		do {
 			fr = f_readdir(&dj, &fno);
@@ -45,37 +45,37 @@ static FRESULT openFile(char *filename) {
 			}
 		} while (fr == FR_OK && i<255 && fno.fname[0] != 0);
 		f_closedir(&dj);
-    }
+	}
 
-    if(filename != NULL) {
-    	fr = f_open(&appFile, filename, FA_READ);
-    }
+	if(filename != NULL) {
+		fr = f_open(&appFile, filename, FA_READ);
+	}
 
-    if (fr != FR_OK && fileList[0]) {
-    	fr = f_open(&appFile, fileList[0], FA_READ);
-    }
+	if (fr != FR_OK && fileList[0]) {
+		fr = f_open(&appFile, fileList[0], FA_READ);
+	}
 
-    if (fr == FR_OK) {
-    	uint32_t lktbl[256];
+	if (fr == FR_OK) {
+		uint32_t lktbl[256];
 		lktbl[0] = 256;
 		appFile.cltbl = lktbl;
 		fr = f_lseek(&appFile, CREATE_LINKMAP);
 	}
 
-    return fr;
+	return fr;
 }
 
 static void fastGpioInitOutputPP(GPIO_TypeDef *GPIOx, uint32_t pinNum) {
 	#define  GPIO_CR_CNF_GP_OUTPUT_PP   0x00000000U
 	uint32_t position = ((pinNum - 8U) << 2);
-    MODIFY_REG(GPIOx->CRH, ((GPIO_CRL_MODE0 | GPIO_CRL_CNF0) << position),
-    		((GPIO_SPEED_FREQ_HIGH + GPIO_CR_CNF_GP_OUTPUT_PP) << position));
+	MODIFY_REG(GPIOx->CRH, ((GPIO_CRL_MODE0 | GPIO_CRL_CNF0) << position),
+			((GPIO_SPEED_FREQ_HIGH + GPIO_CR_CNF_GP_OUTPUT_PP) << position));
 }
 
 static void fastGpioInitOutputPP_DATA(void) {
 	#define  GPIO_CR_CNF_GP_OUTPUT_OD   0x00000004U
-    MODIFY_REG(PORT_DATA->CRH, ((GPIO_CRL_MODE0 | GPIO_CRL_CNF0) << ((PIN_DATA_NUM - 8) << 2)),
-    		((GPIO_SPEED_FREQ_HIGH + GPIO_CR_CNF_GP_OUTPUT_PP) << ((PIN_DATA_NUM - 8) << 2)));
+	MODIFY_REG(PORT_DATA->CRH, ((GPIO_CRL_MODE0 | GPIO_CRL_CNF0) << ((PIN_DATA_NUM - 8) << 2)),
+			((GPIO_SPEED_FREQ_HIGH + GPIO_CR_CNF_GP_OUTPUT_PP) << ((PIN_DATA_NUM - 8) << 2)));
 }
 
 static void fastGpioInitInputPU(GPIO_TypeDef *GPIOx, uint32_t pinNum) {
@@ -84,12 +84,12 @@ static void fastGpioInitInputPU(GPIO_TypeDef *GPIOx, uint32_t pinNum) {
 	uint32_t position = (pinNum < 8) ? (pinNum << 2U) : ((pinNum - 8U) << 2U);
 	__IO uint32_t *configregister = (pinNum < 8) ? &GPIOx->CRL : &GPIOx->CRH;
 	GPIOx->BSRR = 0x01U << pinNum;	//pull-up
-    MODIFY_REG(*configregister, ((GPIO_CRL_MODE0 | GPIO_CRL_CNF0) << position),
-    		((GPIO_CR_MODE_INPUT + GPIO_CR_CNF_INPUT_PU_PD) << position));
+	MODIFY_REG(*configregister, ((GPIO_CRL_MODE0 | GPIO_CRL_CNF0) << position),
+			((GPIO_CR_MODE_INPUT + GPIO_CR_CNF_INPUT_PU_PD) << position));
 }
 
 static void fastGpioInitEvtFal(GPIO_TypeDef *GPIOx, uint32_t pinNum) {
-    __HAL_RCC_AFIO_CLK_ENABLE();
+	__HAL_RCC_AFIO_CLK_ENABLE();
 	MODIFY_REG(AFIO->EXTICR[pinNum >> 2], (0x0F << (4 * (pinNum & 0x03))),
 				(GPIO_GET_INDEX(GPIOx)) << (4 * (pinNum & 0x03)));
 
@@ -151,6 +151,9 @@ static void parseCommand(uint32_t command) {
 			break;
 		}
 
+		// read postdecrement
+		case 0x18:
+		case 0x10: 
 		// read postincrement
 		case 0xD8:
 		case 0xD0: {
@@ -159,6 +162,7 @@ static void parseCommand(uint32_t command) {
 
 			while ((PORT_SELECT->IDR & PIN_SELECT) == GPIO_PIN_RESET) {
 				sendByte(readBuffer);
+				if ((command & 0xC0) == 0) f_lseek(&appFile, appFile.fptr - 2); // postdecrement
 				f_read_byte(&appFile, &readBuffer);
 			}
 
@@ -170,23 +174,25 @@ static void parseCommand(uint32_t command) {
 			break;
 		}
 
+		// Genjitsu: get files list
 		case 0xF0: {
 			fastGpioInitOutputPP_DATA();
 			uint32_t i = 0;
             uint32_t j = 0;
 
-            do {
-            	j = 0;
-                do {
-                	sendByte(fileList[i][j]);
-                } while (fileList[i][j++]);
-            } while (fileList[i++][0]);
+			do {
+				j = 0;
+				do {
+					sendByte(fileList[i][j]);
+				} while (fileList[i][j++]);
+			} while (fileList[i++][0]);
 
 			sendByte(0xFF);
 			fastGpioInitInputPU(PORT_DATA, PIN_DATA_NUM);
 			break;
 		}
 
+		// Genjitsu: mount selected file
 		case 0xF1: {
 			char filename[12+1] = {0,};
 			uint32_t i = 0;
@@ -201,9 +207,16 @@ static void parseCommand(uint32_t command) {
 			break;
 		}
 
-		 // unknown command
+		// Genjitsu: unmount current file and go to the autorun
+		case 0xF2: {
+			if (openFile("AUTORUN.BIN") != FR_OK) {
+				Error_Handler();
+			}
+			break;
+		}
+
+		// unknown command - just ignore
 		default: {
-			Error_Handler();
 			break;
 		}
 	}
@@ -225,7 +238,7 @@ int main(void) {
 			HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFE);
 			SystemClock_Config();
 			if(f_mount(&FATFS_Obj, "0", 1) == FR_OK) {
-				openFile("autorun.bin");
+				openFile("AUTORUN.BIN");
 			}
 		} else {
 			HAL_PWR_EnterSLEEPMode(0, PWR_SLEEPENTRY_WFE);
@@ -244,40 +257,40 @@ int main(void) {
   * @retval None
   */
 static void SystemClock_Config(void) {
-  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
-  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
-  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
+	RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+	RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+	RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
-  /** Initializes the CPU, AHB and APB busses clocks 
-  */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
-  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
-  RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
-  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL6;
-  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
-    Error_Handler();
-  }
+	/** Initializes the CPU, AHB and APB busses clocks 
+	*/
+	RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+	RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+	RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
+	RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+	RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+	RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+	RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL6;
+	if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
+		Error_Handler();
+	}
 
-  /** Initializes the CPU, AHB and APB busses clocks 
-  */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
-                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK) {
-    Error_Handler();
-  }
+	/** Initializes the CPU, AHB and APB busses clocks 
+	*/
+	RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+								|RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+	RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+	RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+	RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
+	RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
+	if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK) {
+		Error_Handler();
+	}
 
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USB;
-  PeriphClkInit.UsbClockSelection = RCC_USBCLKSOURCE_PLL;
-  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK) {
-    Error_Handler();
-  }
+	PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USB;
+	PeriphClkInit.UsbClockSelection = RCC_USBCLKSOURCE_PLL;
+	if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK) {
+		Error_Handler();
+	}
 }
 
 static void MX_GPIO_PullUp(void) {
@@ -304,12 +317,12 @@ static void MX_GPIO_PullUp(void) {
   * @retval None
   */
 static void MX_GPIO_Init(void) {
-  fastGpioInitInputPU(PORT_DATA, PIN_DATA_NUM);
-  fastGpioInitInputPU(PORT_SELECT, PIN_SELECT_NUM);
-  fastGpioInitEvtFal(PORT_SELECT, PIN_SELECT_NUM);
-  fastGpioInitInputPU(PORT_CLK, PIN_CLK_NUM);
-  fastGpioInitEvtFal(PORT_CLK, PIN_CLK_NUM);
-  fastGpioInitOutputPP(PORT_LED, PIN_LED_NUM);
+	fastGpioInitInputPU(PORT_DATA, PIN_DATA_NUM);
+	fastGpioInitInputPU(PORT_SELECT, PIN_SELECT_NUM);
+	fastGpioInitEvtFal(PORT_SELECT, PIN_SELECT_NUM);
+	fastGpioInitInputPU(PORT_CLK, PIN_CLK_NUM);
+	fastGpioInitEvtFal(PORT_CLK, PIN_CLK_NUM);
+	fastGpioInitOutputPP(PORT_LED, PIN_LED_NUM);
 }
 
 
@@ -317,17 +330,17 @@ static void PVD_Config() {
 	__HAL_RCC_PWR_CLK_ENABLE();	//Enable Power Clock
 
 	HAL_NVIC_SetPriority(PVD_IRQn, 0, 0);
-    HAL_NVIC_EnableIRQ(PVD_IRQn);
+	HAL_NVIC_EnableIRQ(PVD_IRQn);
 
-    PWR_PVDTypeDef sConfigPVD;
-    sConfigPVD.PVDLevel = PWR_CR_PLS_2V9;
-    sConfigPVD.Mode =  PWR_PVD_MODE_IT_RISING;
-   	HAL_PWR_ConfigPVD(&sConfigPVD); //event on supply voltage < 2.8V
-    HAL_PWR_EnablePVD();
+	PWR_PVDTypeDef sConfigPVD;
+	sConfigPVD.PVDLevel = PWR_CR_PLS_2V9;
+	sConfigPVD.Mode =  PWR_PVD_MODE_IT_RISING;
+	HAL_PWR_ConfigPVD(&sConfigPVD); //event on supply voltage < 2.8V
+	HAL_PWR_EnablePVD();
 }
 
 void PVD_IRQHandler(void) {
-    HAL_PWR_PVD_IRQHandler();
+	HAL_PWR_PVD_IRQHandler();
 }
 
 /**

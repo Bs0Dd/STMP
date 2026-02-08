@@ -3832,9 +3832,11 @@ FRESULT f_read_byte (
 	FATFS *fs = fp->obj.fs;
 
 	if (fp->obj.objsize - fp->fptr<=0) {
-		LEAVE_FF(fs, FR_DISK_ERR);
+		*buff = 0xFF; // end of "cartridge", just return 0xFF :-)
+		fp->fptr++;
+		LEAVE_FF(fs, FR_OK);
 	}
-
+	
 	if ((fp->fptr % SS(fs)) == 0) {
 		uint32_t csect = (fp->fptr / SS(fs) & (fs->csize - 1));
 		if (csect == 0) {
